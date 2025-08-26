@@ -2335,20 +2335,6 @@ function dz = aug_rhs(tt,zz,wn,zeta,agf)
     dz(2:2:end) = av;
 end
 
-% --------- PSA yardımcı (yalnız PSA için downsample) -------------------
-function [t2,a2] = psa_grid(t,a,dt_target)
-    if isempty(dt_target) || dt_target<=0
-        t2=t; a2=a; return;
-    end
-    dt = median(diff(t));
-    if dt >= dt_target-1e-12
-        t2=t; a2=a;
-    else
-        t2 = (t(1):dt_target:t(end)).';
-        a2 = pchip(t,a,t2);
-    end
-end
-
 % ===================== GA Setleri & Decode Yardımcıları =================
 function [lb,ub,int_idx,names] = ga_get_bounds(set_id)
     switch set_id
@@ -2374,8 +2360,6 @@ function [lb,ub,int_idx,names] = ga_get_bounds(set_id)
             names = {'n_orf','Cd0','mu_ref','b_mu','beta0','b_beta','hA_os','dP_cap','Vmin_fac'};
 
     end
-end
-
 
 function [geom, sh, orf, hyd, therm, num, ga] = decode_design_apply(ga, geom, sh, orf, hyd, therm, num)
     % --- set_id'i güvene al (string/char gelirse sayıya çevir) ---
@@ -2620,6 +2604,8 @@ end
 
 function Jp = local_JPattern(n)
 % Güvenli, tutucu (full) JPattern — küçük boyutlarda performans yeterli
+
+
 % İstersen kendi bant/blok yapını sonra geri koyarsın.
     Ns = n - 1;
     Ntot = 2*n + 2*Ns + Ns + 2;
@@ -2645,7 +2631,7 @@ function [J1, J2] = compute_objectives_split( ...
 
     % J2: yalnız mutlak ivme (RMS+p95 hibrit)
     obj2.weights_da = [0 1];
-   [J2, ~] = compute_objective_over_records( ...
+  [J2, ~] = compute_objective_over_records( ...
     src, obj2, tail_sec, ...
     t_rawX,t_rawY,a_rawX,a_rawY,t_sclX,t_sclY,a_sclX,a_sclY, ...
     t5x_raw,t95x_raw,t5y_raw,t95y_raw,t5x_scl,t95x_scl,t5y_scl,t95y_scl, ...
@@ -2771,7 +2757,5 @@ function Sa = sdof_PSA_ode(t, ag, T, zeta)
     a_abs = a_rel + ag(:);                       % mutlak ivme
     Sa    = max(abs(a_abs));
 end
-
-
 end
-
+end

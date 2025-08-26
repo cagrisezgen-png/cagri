@@ -1,3 +1,4 @@
+function optimizasyonon2_3
 %% =====================================================================
 %  10-Katlı Çerçeve — ODE-only viskoz damper modeli (CLEAN / AHENK + Switch)
 %  (Sıkışabilirlik + Hat ataletı + Cd(Re) orifis + kavitasyon + 2-düğümlü ısı)
@@ -8,6 +9,7 @@
 % =====================================================================
 
 clear; clc; close all;
+tic;  % genel başlangıç zamanı
 % Global log anahtarları
 global LOG; LOG = struct('verbose_decode', false);
 global PARETO;
@@ -220,6 +222,8 @@ else
 end
 
 %% -------------------- Kayıtları oku → RAW (tekil & hedef dt kontrolü) -
+t_block = tic;
+c1 = onCleanup(@() fprintf('Blok 1 %.2f s\n', toc(t_block)));
 t_rawX = cell(R,1); t_rawY = cell(R,1);
 a_rawX = cell(R,1); a_rawY = cell(R,1);
 
@@ -242,8 +246,11 @@ for r=1:R
         warning('Kayıt #%d dt=%.6g s, hedef=%.6g s (resample kapalı).', r, dtX, prep.target_dt);
     end
 end
+clear c1
 
 %% -------------------- Şiddet eşitleme (scaled set) --------------------
+t_block = tic;
+c2 = onCleanup(@() fprintf('Blok 2 %.2f s\n', toc(t_block)));
 t_sclX = t_rawX; t_sclY = t_rawY;
 a_sclX = a_rawX; a_sclY = a_rawY;   % default: scaled = raw
 
@@ -295,8 +302,11 @@ if pp.on.intensity
         if ~isempty(a_rawY{r}), a_sclY{r} = s_hyb * a_rawY{r}; end
     end
 end
+clear c2
 
 %% -------------------- Arias pencereleri (raw & scaled) -----------------
+t_block = tic;
+c3 = onCleanup(@() fprintf('Blok 3 %.2f s\n', toc(t_block)));
 [t5x_raw,t95x_raw,t5y_raw,t95y_raw] = deal(zeros(R,1),zeros(R,1),nan(R,1),nan(R,1));
 [t5x_scl,t95x_scl,t5y_scl,t95y_scl] = deal(zeros(R,1),zeros(R,1),nan(R,1),nan(R,1));
 
@@ -314,6 +324,7 @@ for r=1:R
         if ~isempty(a_sclY{r}), t5y_scl(r)=t5x_scl(r);  t95y_scl(r)=t95x_scl(r); end
     end
 end
+clear c3
 %% -------------------- Baz parametre setleri (parametrebulur uyumlu) ---
 % Damper geometri + malzeme (BAZ)
 geom.Dp    = 0.12;                 % piston çapı [m]
@@ -640,6 +651,8 @@ end
 
 
 %% -------------------- (1) Tek koşu: görselleştirme/diagnostic ---------
+t_block = tic;
+c4 = onCleanup(@() fprintf('Blok 4 %.2f s\n', toc(t_block)));
 rec = min(max(1, vis.sel_rec), R);
 dir = upper(string(vis.sel_dir));
 [t_sim, ag_sim, t5_sim, t95_sim] = pickA(sel.sim_source, rec, dir);
@@ -737,8 +750,11 @@ if vis.make_plots
     plot(t_plot, a_absD(:, j_mon), 'b-',  'DisplayName','damperli');
     ylabel(sprintf('a_{%d} [m/s^2]', j_mon)); xlabel('t [s]'); legend('show','Location','best');
 end
+clear c4
 
 %% -------------------- (2) Amaç fonksiyonu — kompakt (ilk koddaki gibi) ----
+t_block = tic;
+c5 = onCleanup(@() fprintf('Blok 5 %.2f s\n', toc(t_block)));
 % Girdi olarak şunlar zaten mevcut olmalı:
 % t_plot, dt_plot, vD, dlog_active, M, K, k_sd, obj, cons, orf, hyd, therm, num, t5_plot, t95_plot
 
@@ -799,8 +815,11 @@ fprintf('zeta_eq=%.3f | <P_mech>_diss=%.3e W | Q95=%.3e | dp95=%.3e | ok=[Q %d, 
 
 % GA minimizasyonu ile uyum için amaç değeri
 J = -score;
+clear c5
 
 %% -------------------- (3) Kısıtlar: Penalty hesap (R kayıt) ----------
+t_block = tic;
+c6 = onCleanup(@() fprintf('Blok 6 %.2f s\n', toc(t_block)));
 [Penalty, cons_detail] = evaluate_constraints_over_records( ...
     cons, cons.src_for_constraints, obj, pp.tail_sec, ...
     t_rawX,t_rawY,a_rawX,a_rawY,t_sclX,t_sclY,a_sclX,a_sclY, ...
@@ -938,11 +957,14 @@ if isfield(cons_detail,'Fmax_records')
     Qp95_all = max(cons_detail.Qp95_records, [], 'omitnan');
 
     fprintf('--- Tanılama (zarf değerleri) ---\n');
-    fprintf('Fmax=%.3e N | stroke=%.3e m | dpq=%.3e Pa | ΔT=%.2f C | cav95=%.3f | Q95=%.3e m^3/s\n', ...
-        Fmax_all, stroke_all, dpq_all, dT_all, cav_all, Qp95_all);
+     fprintf('Fmax=%.3e N | stroke=%.3e m | dpq=%.3e Pa | ΔT=%.2f C | cav95=%.3f | Q95=%.3e m^3/s\n', ...
+         Fmax_all, stroke_all, dpq_all, dT_all, cav_all, Qp95_all);
+ end
+
+clear c6
+fprintf('Toplam %.2f s\n', toc);
+
 end
-
-
 
 % ======================================================================
 %                             FONKSİYONLAR
@@ -1648,6 +1670,7 @@ function [f, aux] = eval_fitness_for_x(x, design_set, ...
 
     % ---- Önbellek anahtarı
     persistent memo
+    global PARETO
     if isempty(memo), memo = containers.Map('KeyType','char','ValueType','any'); end
     key = sprintf('set%d|%s', design_set, mat2str(x,8));
 
@@ -1691,7 +1714,6 @@ function [f, aux] = eval_fitness_for_x(x, design_set, ...
 aux_J1 = J1_split; aux_J2 = J2_split;
 
 % --- Pareto günlüğüne yaz ---
-global PARETO;
 PARETO.J1(end+1,1)  = aux_J1;
 PARETO.J2(end+1,1)  = aux_J2;
 PARETO.F(end+1,1)   = J + Penalty;
@@ -2313,20 +2335,6 @@ function dz = aug_rhs(tt,zz,wn,zeta,agf)
     dz(2:2:end) = av;
 end
 
-% --------- PSA yardımcı (yalnız PSA için downsample) -------------------
-function [t2,a2] = psa_grid(t,a,dt_target)
-    if isempty(dt_target) || dt_target<=0
-        t2=t; a2=a; return;
-    end
-    dt = median(diff(t));
-    if dt >= dt_target-1e-12
-        t2=t; a2=a;
-    else
-        t2 = (t(1):dt_target:t(end)).';
-        a2 = pchip(t,a,t2);
-    end
-end
-
 % ===================== GA Setleri & Decode Yardımcıları =================
 function [lb,ub,int_idx,names] = ga_get_bounds(set_id)
     switch set_id
@@ -2623,22 +2631,13 @@ function [J1, J2] = compute_objectives_split( ...
 
     % J2: yalnız mutlak ivme (RMS+p95 hibrit)
     obj2.weights_da = [0 1];
-    [J2, ~] = compute_objective_over_records( ...
-        src, obj2, tail_sec, ...
-        t_rawX,t_rawY,a_rawX,a_rawY,t_sclX,t_sclY,a_sclX,a_sclY, ...
-        t5x_raw,t95x_raw,t5y_raw,t95y_raw,t5x_scl,t95x_scl,t5y_scl,t95y_scl, ...
-        M,Cstr,K,n,geom,sh,orf,hyd,therm,num,cfg, design_set, x_ga);
-%% ===================== EKSİK/YARDIMCI FONKSİYONLAR =====================
-
-function val = getfield_default(S, name, defaultVal)
-% S alanı yoksa default döndürür
-    if ~isstruct(S) || ~isfield(S,name) || isempty(S.(name))
-        val = defaultVal;
-    else
-        val = S.(name);
-    end
+[J2, ~] = compute_objective_over_records( ...
+    src, obj2, tail_sec, ...
+    t_rawX,t_rawY,a_rawX,a_rawY,t_sclX,t_sclY,a_sclX,a_sclY, ...
+    t5x_raw,t95x_raw,t5y_raw,t95y_raw,t5x_scl,t95x_scl,t5y_scl,t95y_scl, ...
+    M,Cstr,K,n,geom,sh,orf,hyd,therm,num,cfg, design_set, x_ga);
 end
-
+%% ===================== EKSİK/YARDIMCI FONKSİYONLAR =====================
 function [tPSA, agPSA] = psa_grid(t, ag, down_dt)
 % PSA için opsiyonel yeniden örnekleme (yalnız downsample; upsample etmez)
     t = t(:); ag = ag(:);

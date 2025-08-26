@@ -2761,6 +2761,3 @@ function Sa = sdof_PSA_ode(t, ag, T, zeta)
     a_abs = a_rel + ag(:);                       % mutlak ivme
     Sa    = max(abs(a_abs));
 end
-
-
-

@@ -1017,8 +1017,12 @@ t_rawX,t_rawY,a_rawX,a_rawY,t_sclX,t_sclY,a_sclX,a_sclY, ...
 
     % Sonra TASARIM: her kayıt → yön zarfı → μ-agg → J_r
     for r=1:R
-        [d_rel_X, a_rel_X] = local_design_ratios_one_dir('X', r);
-        [d_rel_Y, a_rel_Y] = local_design_ratios_one_dir('Y', r);
+        [d_rel_X, a_rel_X] = local_design_ratios_one_dir('X', r, ...
+            tX, aX, t5x, t95x, tY, aY, t5y, t95y, ref, tail_sec, obj, ...
+            design_set, x_ga, M, Cstr, K, n, geom, sh, orf, hyd, therm, num, cfg);
+        [d_rel_Y, a_rel_Y] = local_design_ratios_one_dir('Y', r, ...
+            tX, aX, t5x, t95x, tY, aY, t5y, t95y, ref, tail_sec, obj, ...
+            design_set, x_ga, M, Cstr, K, n, geom, sh, orf, hyd, therm, num, cfg);
 
         switch lower(obj.dir_mode)
             case 'xonly', d_rel = d_rel_X; a_rel = a_rel_X;
@@ -1041,18 +1045,21 @@ t_rawX,t_rawY,a_rawX,a_rawY,t_sclX,t_sclY,a_sclX,a_sclY, ...
     Jlist = [out.J_r].';
     J = cvar_from_samples(Jlist, alpha);
 
-    % ---- iç yardımcılar ----
-   
-    function [d_ref, a_ref] = local_ref_metrics(t, ag, t5, t95, obj, M,C,K, n)
-        % Kuyruk eklemeden baz referans (damper yok)
-        [x0,a0] = lin_MCK_consistent(t, ag, M, C, K);
-        d_ref = max(abs(x0(:,min(obj.idx_disp_story,n))));
-        a_ref = acc_metric_from_series(t, a0(:,min(obj.idx_acc_story,n)), t5, t95, obj);
-        d_ref = max(d_ref, eps);
-        a_ref = max(a_ref, eps);
-    end
+end
 
-    function [d_rel_dir, a_rel_dir] = local_design_ratios_one_dir(which, r)
+function [d_ref, a_ref] = local_ref_metrics(t, ag, t5, t95, obj, M, C, K, n)
+    % Kuyruk eklemeden baz referans (damper yok)
+    [x0,a0] = lin_MCK_consistent(t, ag, M, C, K);
+    d_ref = max(abs(x0(:,min(obj.idx_disp_story,n))));
+    a_ref = acc_metric_from_series(t, a0(:,min(obj.idx_acc_story,n)), t5, t95, obj);
+    d_ref = max(d_ref, eps);
+    a_ref = max(a_ref, eps);
+end
+
+function [d_rel_dir, a_rel_dir] = local_design_ratios_one_dir(which, r, ...
+    tX, aX, t5x, t95x, tY, aY, t5y, t95y, ref, tail_sec, obj, ...
+    design_set, x_ga, M, Cstr, K, n, geom, sh, orf, hyd, therm, num, cfg)
+
     switch upper(string(which))
         case "X"
             t=tX{r}; ag=aX{r}; t5=t5x(r); t95=t95x(r);
@@ -1065,17 +1072,14 @@ t_rawX,t_rawY,a_rawX,a_rawY,t_sclX,t_sclY,a_sclX,a_sclY, ...
         d_rel_dir = NaN; a_rel_dir = NaN; return;
     end
 
-
     % --- Simülasyon penceresi: aynı veriye kuyruk ekleyelim ---
     dt = median(diff(t));
-tail_sec_loc = tail_sec;
-    t_tail = (t(end)+dt : dt : t(end)+tail_sec_loc).';
+    t_tail = (t(end)+dt : dt : t(end)+tail_sec).';
     t_s    = [t;  t_tail];
     ag_s   = [ag; zeros(size(t_tail))];
 
     % PF ramp t_on: Arias t5 + 3
     cfg_dir = set_pf_ton_if_nan(cfg, t5, 0.5);
-
 
     % μ senaryoları
     mus   = obj.mu_scenarios(:).';
@@ -1087,11 +1091,11 @@ tail_sec_loc = tail_sec;
             M, Cstr, K, n, geom, sh, orf, hyd, therm, num, cfg_dir);
 
         if ~resp.ok
-    fail_ratio = 5;              % istersen 3–10 arası dene
-    d_vals(k) = fail_ratio * d_ref;
-    a_vals(k) = fail_ratio * a_ref;
-    continue;
-end
+            fail_ratio = 5;              % istersen 3–10 arası dene
+            d_vals(k) = fail_ratio * d_ref;
+            a_vals(k) = fail_ratio * a_ref;
+            continue;
+        end
 
         x  = resp.y.x(1:numel(t), :);   % kuyruğu at
         aR = resp.y.a(1:numel(t), :);
@@ -1115,8 +1119,6 @@ end
 
     d_rel_dir = d_agg / max(d_ref, eps);
     a_rel_dir = a_agg / max(a_ref, eps);
-end
-
 end
 
 function val = acc_metric_from_series(t, a, t5, t95, obj)
@@ -1186,13 +1188,17 @@ function [J1, out] = compute_J1_IDR_over_records( ...
         % --- X yönü referans IDR
         dref_X = NaN; dagg_X = NaN;
         if ~isempty(aX{r})
-            [dref_X, dagg_X] = local_idr_ref_and_agg(tX{r}, aX{r}, t5x(r), t95x(r), 'X', r);
+            [dref_X, dagg_X] = local_idr_ref_and_agg(tX{r}, aX{r}, t5x(r), t95x(r), ...
+                M, Cstr, K, n, h_story, tail_sec, cfg, mus, isWeighted, wmu, ...
+                design_set, x_ga, geom, sh, orf, hyd, therm, num);
         end
 
         % --- Y yönü (varsa)
         dref_Y = NaN; dagg_Y = NaN;
         if ~isempty(aY{r})
-            [dref_Y, dagg_Y] = local_idr_ref_and_agg(tY{r}, aY{r}, t5y(r), t95y(r), 'Y', r);
+            [dref_Y, dagg_Y] = local_idr_ref_and_agg(tY{r}, aY{r}, t5y(r), t95y(r), ...
+                M, Cstr, K, n, h_story, tail_sec, cfg, mus, isWeighted, wmu, ...
+                design_set, x_ga, geom, sh, orf, hyd, therm, num);
         end
 
         % --- Yön zarfı
@@ -1209,39 +1215,45 @@ function [J1, out] = compute_J1_IDR_over_records( ...
 
     J1 = cvar_from_samples(out.d_rel, obj.alpha_CVaR);
 
-    % ---- local helper
-    function [d_ref, d_agg] = local_idr_ref_and_agg(t, ag, t5, t95, dirStr, rid)
-        % Referans (damper yok, μ=1.0), pencere içinde IDR zarfı
-        [x0,~] = lin_MCK_consistent(t, ag, M, Cstr, K);
-        w = (t >= t5 & t <= t95);
-        drift0 = x0(:,2:end) - x0(:,1:end-1);                       % Nt x Ns
-        idr0   = abs(drift0(w,:)) ./ (ones(sum(w),1) * h_story(:)'); % Nt_w x Ns
-        d_ref  = max(idr0,[],'all');                                 % skaler
+end
 
-        % Tasarım: kuyruk ekle + PF ramp guard
-        dt     = median(diff(t));
-        t_tail = (t(end)+dt : dt : t(end)+tail_sec).';
-        t_s    = [t; t_tail];
-        ag_s   = [ag; zeros(size(t_tail))];
+function [d_ref, d_agg] = local_idr_ref_and_agg(t, ag, t5, t95, ...
+    M, Cstr, K, n, h_story, tail_sec, cfg, mus, isWeighted, wmu, ...
+    design_set, x_ga, geom, sh, orf, hyd, therm, num)
 
-        cfg_dir = set_pf_ton_if_nan(cfg, t5, 0.5);
+    % Referans (damper yok, μ=1.0), pencere içinde IDR zarfı
+    [x0,~] = lin_MCK_consistent(t, ag, M, Cstr, K);
+    w = (t >= t5 & t <= t95);
+    drift0 = x0(:,2:end) - x0(:,1:end-1);
+    idr0   = abs(drift0(w,:)) ./ (ones(sum(w),1) * h_story(:)');
+    d_ref  = max(idr0,[],'all');
 
-        vals = nan(size(mus));
-        for k = 1:numel(mus)
-            resp = simulate(design_set, x_ga, mus(k), t_s, ag_s, ...
-                            M,Cstr,K,n,geom,sh,orf,hyd,therm,num,cfg_dir);
-            if ~resp.ok
-                vals(k) = 5 * d_ref;  % fail durumunda güvenli büyük ceza
-                continue;
-            end
-            xD   = resp.y.x(1:numel(t), :);     % kuyruğu at
-            driftD = xD(:,2:end) - xD(:,1:end-1);
-            idrD   = abs(driftD(w,:)) ./ (ones(sum(w),1) * h_story(:)');
-            vals(k)= max(idrD,[],'all');
+    % Tasarım: kuyruk ekle + PF ramp guard
+    dt     = median(diff(t));
+    t_tail = (t(end)+dt : dt : t(end)+tail_sec).';
+    t_s    = [t; t_tail];
+    ag_s   = [ag; zeros(size(t_tail))];
+
+    cfg_dir = set_pf_ton_if_nan(cfg, t5, 0.5);
+
+    vals = nan(size(mus));
+    for k = 1:numel(mus)
+        resp = simulate(design_set, x_ga, mus(k), t_s, ag_s, ...
+                        M, Cstr, K, n, geom, sh, orf, hyd, therm, num, cfg_dir);
+        if ~resp.ok
+            vals(k) = 5 * d_ref;
+            continue;
         end
+        xD   = resp.y.x(1:numel(t), :);
+        driftD = xD(:,2:end) - xD(:,1:end-1);
+        idrD   = abs(driftD(w,:)) ./ (ones(sum(w),1) * h_story(:)');
+        vals(k)= max(idrD,[],'all');
+    end
 
-        if isWeighted, d_agg = nansum(wmu .* vals(:));
-        else,          d_agg = max(vals, [], 'omitnan'); end
+    if isWeighted
+        d_agg = nansum(wmu .* vals(:));
+    else
+        d_agg = max(vals, [], 'omitnan');
     end
 end
 
@@ -1279,13 +1291,17 @@ function [J2, out] = compute_J2_ACC_over_records( ...
         % --- X yönü: A_env ref ve agg
         aref_X = NaN; aagg_X = NaN;
         if ~isempty(aX{r})
-            [aref_X, aagg_X] = local_acc_ref_and_agg(tX{r}, aX{r}, t5x(r), t95x(r), 'X', r);
+            [aref_X, aagg_X] = local_acc_ref_and_agg(tX{r}, aX{r}, t5x(r), t95x(r), ...
+                w_p, M, Cstr, K, n, tail_sec, cfg, mus, isWeighted, wmu, ...
+                design_set, x_ga, geom, sh, orf, hyd, therm, num);
         end
 
         % --- Y yönü (varsa)
         aref_Y = NaN; aagg_Y = NaN;
         if ~isempty(aY{r})
-            [aref_Y, aagg_Y] = local_acc_ref_and_agg(tY{r}, aY{r}, t5y(r), t95y(r), 'Y', r);
+            [aref_Y, aagg_Y] = local_acc_ref_and_agg(tY{r}, aY{r}, t5y(r), t95y(r), ...
+                w_p, M, Cstr, K, n, tail_sec, cfg, mus, isWeighted, wmu, ...
+                design_set, x_ga, geom, sh, orf, hyd, therm, num);
         end
 
         % --- Yön zarfı
@@ -1302,51 +1318,57 @@ function [J2, out] = compute_J2_ACC_over_records( ...
 
     J2 = cvar_from_samples(out.a_rel, obj.alpha_CVaR);
 
-    % ---- local helper
-    function [A_ref, A_agg] = local_acc_ref_and_agg(t, ag, t5, t95, dirStr, rid)
-        % Referans (damper yok) mutlak ivme zarfı (RMS+p95)
-        [~,a_rel0] = lin_MCK_consistent(t, ag, M, Cstr, K);  % relatif
-        a_abs0 = a_rel0 + ag(:) * ones(1, size(a_rel0,2));  % her kat için mutlak
-        w = (t >= t5 & t <= t95);
-        A_i = zeros(1,size(a_abs0,2));
-        for i=1:size(a_abs0,2)
-            ai = a_abs0(w,i);
+end
+
+function [A_ref, A_agg] = local_acc_ref_and_agg(t, ag, t5, t95, ...
+    w_p, M, Cstr, K, n, tail_sec, cfg, mus, isWeighted, wmu, ...
+    design_set, x_ga, geom, sh, orf, hyd, therm, num)
+
+    % Referans (damper yok) mutlak ivme zarfı (RMS+p95)
+    [~,a_rel0] = lin_MCK_consistent(t, ag, M, Cstr, K);  % relatif
+    a_abs0 = a_rel0 + ag(:) * ones(1, size(a_rel0,2));  % her kat için mutlak
+    w = (t >= t5 & t <= t95);
+    A_i = zeros(1,size(a_abs0,2));
+    for i=1:size(a_abs0,2)
+        ai = a_abs0(w,i);
+        rmsv = sqrt(mean(ai.^2,'omitnan'));
+        p95  = prctile(abs(ai),95);
+        A_i(i) = rmsv + w_p * p95;
+    end
+    A_ref = max(A_i);   % kat zarfı
+
+    % Tasarım: kuyruk ekle + PF guard
+    dt     = median(diff(t));
+    t_tail = (t(end)+dt : dt : t(end)+tail_sec).';
+    t_s    = [t; t_tail];
+    ag_s   = [ag; zeros(size(t_tail))];
+    cfg_dir = set_pf_ton_if_nan(cfg, t5, 0.5);
+
+    vals = nan(size(mus));
+    for k = 1:numel(mus)
+        resp = simulate(design_set, x_ga, mus(k), t_s, ag_s, ...
+                        M, Cstr, K, n, geom, sh, orf, hyd, therm, num, cfg_dir);
+        if ~resp.ok
+            vals(k) = 5 * A_ref;  % fail durumunda güvenli büyük ceza
+            continue;
+        end
+        a_relD = resp.y.a(1:numel(t), :);           % relatif, kuyruğu at
+        a_absD = a_relD + ag(:) * ones(1,size(a_relD,2));
+
+        Ai = zeros(1,size(a_absD,2));
+        for i=1:size(a_absD,2)
+            ai = a_absD(w,i);
             rmsv = sqrt(mean(ai.^2,'omitnan'));
             p95  = prctile(abs(ai),95);
-            A_i(i) = rmsv + w_p * p95;
+            Ai(i)= rmsv + w_p * p95;
         end
-        A_ref = max(A_i);   % kat zarfı
+        vals(k) = max(Ai);   % kat zarfı
+    end
 
-        % Tasarım: kuyruk ekle + PF guard
-        dt     = median(diff(t));
-        t_tail = (t(end)+dt : dt : t(end)+tail_sec).';
-        t_s    = [t; t_tail];
-        ag_s   = [ag; zeros(size(t_tail))];
-        cfg_dir = set_pf_ton_if_nan(cfg, t5, 0.5);
-
-        vals = nan(size(mus));
-        for k = 1:numel(mus)
-            resp = simulate(design_set, x_ga, mus(k), t_s, ag_s, ...
-                            M,Cstr,K,n,geom,sh,orf,hyd,therm,num,cfg_dir);
-            if ~resp.ok
-                vals(k) = 5 * A_ref;  % fail durumunda güvenli büyük ceza
-                continue;
-            end
-            a_relD = resp.y.a(1:numel(t), :);           % relatif, kuyruğu at
-            a_absD = a_relD + ag(:) * ones(1,size(a_relD,2));
-
-            Ai = zeros(1,size(a_absD,2));
-            for i=1:size(a_absD,2)
-                ai = a_absD(w,i);
-                rmsv = sqrt(mean(ai.^2,'omitnan'));
-                p95  = prctile(abs(ai),95);
-                Ai(i)= rmsv + w_p * p95;
-            end
-            vals(k) = max(Ai);   % kat zarfı
-        end
-
-        if isWeighted, A_agg = nansum(wmu .* vals(:));
-        else,          A_agg = max(vals, [], 'omitnan'); end
+    if isWeighted
+        A_agg = nansum(wmu .* vals(:));
+    else
+        A_agg = max(vals, [], 'omitnan');
     end
 end
 
@@ -1786,29 +1808,6 @@ function f = compact_log_wrapper(x, inner_fitfun)
     fprintf('%6d %15d %13.3f %13.3f %8d\n', ROW, FEVAL, J, f, nviol);
 end
 
-function cfg = ensure_cfg_defaults(cfg)
-    if nargin==0 || ~isstruct(cfg), cfg = struct(); end
-    % top-level toggles
-    def_top = {'use_orifice',true; 'use_thermal',true};
-    for i=1:size(def_top,1)
-        if ~isfield(cfg,def_top{i,1}), cfg.(def_top{i,1}) = def_top{i,2}; end
-    end
-    % nested on-struct
-    if ~isfield(cfg,'on') || ~isstruct(cfg.on), cfg.on = struct(); end
-    def_on = {'CdRe',true; 'Rlam',true; 'Rkv',true; 'Qsat',true; 'cavitation',true; ...
-              'dP_cap',true; 'hyd_inertia',true; 'leak',true; ...
-              'pressure_ode',true; 'pressure_force',true; 'mu_floor',true; ...
-              'pf_resistive_only', false};   % <<< YENİ: resistive-only anahtarı
-    for i=1:size(def_on,1)
-        f = def_on{i,1}; if ~isfield(cfg.on,f), cfg.on.(f) = def_on{i,2}; end
-    end
-    % PF struct
-    if ~isfield(cfg,'PF') || ~isstruct(cfg.PF), cfg.PF = struct(); end
-    if ~isfield(cfg.PF,'mode'), cfg.PF.mode = 'ramp'; end
-    if ~isfield(cfg.PF,'t_on'), cfg.PF.t_on = NaN; end
-    if ~isfield(cfg.PF,'tau'),  cfg.PF.tau  = 2.5; end
-    if ~isfield(cfg.PF,'gain'), cfg.PF.gain = 0.6; end
-end
 
 
 % ---- PF t_on guard helper ---------------------------------------------
@@ -1914,7 +1913,7 @@ function [x,a,diag,varargout] = mck_with_damper_adv(t,ag,M,C,K,k_sd,geom,orf,hyd
 
     agf = griddedInterpolant(t, ag, 'pchip', 'nearest');
 
-    odef=@(tt,z) rhs(tt,z);
+    odef=@(tt,z) mck_rhs(tt,z,n,Ns,nd,hyd,geom,therm,num,cfg,Ap,Ao,k_sd,M,C,K,agf,r,orf);
     sol=ode23tb(odef,[t(1) t(end)],z0,opts);
 
     t_end_sol=sol.x(end); t_use=t(t<=t_end_sol+1e-12); Z_use=deval(sol,t_use).';
@@ -1949,130 +1948,149 @@ function [x,a,diag,varargout] = mck_with_damper_adv(t,ag,M,C,K,k_sd,geom,orf,hyd
 
     if nargout>=4, varargout{1} = v; end
 
-    % -------------------- iç fonksiyonlar --------------------
-    function dz = rhs(tt,z)
-        x  = z(1:n); v = z(n+1:2*n);
-        p1 = z(2*n + (1:Ns)); p2 = z(2*n + Ns + (1:Ns));
-        Q  = z(2*n + 2*Ns + (1:Ns)); T_o = z(end-1); T_s = z(end);
-
-        mu_raw = therm.mu_ref * exp(therm.b_mu*(T_o - therm.T_ref_C));
-        if cfg.use_thermal && cfg.on.mu_floor, mu=max(num.mu_min_phys,mu_raw); else, mu=cfg.use_thermal*mu_raw + (~cfg.use_thermal)*therm.mu_ref; end
-        if cfg.use_thermal
-            rho=max(100,therm.rho_ref/(1+therm.alpha_rho*(T_o-therm.T_ref_C)));
-            beta=max(1e8,therm.beta0*exp(therm.b_beta*(T_o-therm.T_ref_C)));
-            p_vap=p_vap_Antoine(T_o,therm,orf);
-        else
-            rho=therm.rho_ref; beta=therm.beta0; p_vap=p_vap_Antoine(therm.T_ref_C,therm,orf);
-        end
-
-        drift = x(2:end) - x(1:end-1);
-        dvel  = v(2:end) - v(1:end-1);
-
-        V1 = nd*hyd.V0 + Ap*drift;
-        V2 = nd*hyd.V0 - Ap*drift;
-        Vmin = nd * hyd.Vmin_fac * hyd.V0; V1=max(V1,Vmin); V2=max(V2,Vmin);
-
-        % --- Orifis hidrolik kayıpları ---
-        if cfg.use_orifice
-            if cfg.on.CdRe
-                Re = rho .* abs(Q) .* geom.d_o ./ max(Ao * mu, 1e-9);
-                Cd = orf.CdInf - (orf.CdInf - orf.Cd0) ./ (1 + (Re./orf.Rec).^orf.p_exp);
-                Cd = max(min(Cd, 1.2), 0.2);
-            else
-                Cd = orf.CdInf;
-            end
-            if cfg.on.Rkv, RQ = rho ./ max(2 * (Cd .* Ao).^2, 1e-12); else, RQ = 0 * Q; end
-
-            Qcap = getfield_default(num,'Qcap_big', ...
-                0.4 * ( max(max(orf.CdInf,orf.Cd0)*Ao, 1e-9) * sqrt(2*1.0e9 / max(therm.rho_ref,100)) ) );
-            if cfg.on.Qsat, Q_h = Qcap * tanh(Q ./ max(Qcap, 1e-9)); else, Q_h = Q; end
-
-            dP_kv = RQ .* Q_h .* abs(Q_h);
-            if cfg.on.Rlam
-                R_lam  = (128 * mu * geom.Lori / (pi * geom.d_o^4)) / max(1, nd);
-                dP_lam = R_lam .* Q;
-            else
-                dP_lam = 0 * Q;
-            end
-            dP_h = dP_lam + dP_kv;
-        else
-            dP_h = 0 * Q; Q_h = 0 * Q;
-        end
-
-        % --- Kavitasyon, dP_cap, atalet, leak ---
-        if cfg.on.cavitation, p2_eff = max(p2, orf.cav_sf * p_vap); else, p2_eff = p2; end
-        dP_raw = p1 - p2_eff;
-        if cfg.on.dP_cap && isfinite(num.dP_cap)
-            dP_eff = num.dP_cap * tanh(dP_raw ./ max(num.dP_cap, 1));
-        else
-            dP_eff = dP_raw;
-        end
-        if cfg.use_orifice && cfg.on.hyd_inertia, dQ = (dP_eff - dP_h) ./ max(hyd.Lh, 1e-12); else, dQ = 0 * Q; end
-        if cfg.on.leak, Q_leak = hyd.K_leak * (p1 - p2); else, Q_leak = 0 * Q; end
-
-        % --- Basınç ODE'leri ---
-        if cfg.on.pressure_ode
-            dp1 = (beta ./ V1) .* ( -Q - Q_leak - Ap * dvel );
-            dp2 = (beta ./ V2) .* ( +Q + Q_leak + Ap * dvel );
-        else
-            dp1 = 0 * p1; dp2 = 0 * p2;
-        end
-        % Cavitation clamp
-        if cfg.on.cavitation
-            m1 = (p1 <= p_vap) & ((-Q - Q_leak - Ap*dvel) < 0);
-            m2 = (p2 <= p_vap) & ((+Q + Q_leak + Ap*dvel) < 0);
-            dp1(m1) = 0; dp2(m2) = 0;
-        end
-
-        % --- Damper kuvveti (yay + PF) — RESISTIVE-ONLY KLAMP BURADA ---
-        w_pf    = pf_weight_scalar(tt, cfg) * cfg.PF.gain;
-        F_story = k_sd * drift;
-
-        if cfg.on.pressure_force
-            dp_pf = (p1 - p2_eff);                % Ns x 1
-            if isfield(cfg,'on') && isfield(cfg.on,'pf_resistive_only') && cfg.on.pf_resistive_only
-s = tanh(20*dvel);   % 20 ~ 1/(0.05 m/s) benzeri yumuşatma
-                % İstersen daha yumuşak için: s = tanh(20*dvel);
-                dp_pf = s .* max(0, s .* dp_pf);  % yalnız dirençli bileşen
-            end
-            F_story = F_story + Ap * (w_pf .* dp_pf);  % w_pf skaler
-        end
-
-        % --- Kuvvet dağıtımı, yapı ODE ---
-        F        = zeros(n,1);
-        F(1)     = -F_story(1);
-        if n > 2, F(2:n-1) = F_story(1:end-1) - F_story(2:end); end
-        F(n)     =  F_story(end);
-
-        dv = M \ ( -C*v - K*x - F - M*r*agf(tt) );
-
-        % --- Isı ODE'leri (toplam kayıp gücü) ---
-        if cfg.use_thermal
-            if cfg.use_orifice && cfg.on.Rlam, P_lam = dP_lam .* Q; else, P_lam = 0; end
-            if cfg.use_orifice && cfg.on.Rkv,  P_kv  = dP_kv  .* Q; else, P_kv  = 0; end
-            P_sum = sum(P_lam + P_kv); P_sum = max(P_sum, 0);
-
-            dT_o = ( P_sum ...
-                     - therm.hA_os   * (T_o - T_s) ...
-                     - therm.hA_o_env* (T_o - therm.T_env_C) ) / max(therm.C_oil,   eps);
-            dT_s = ( + therm.hA_os   * (T_o - T_s) ...
-                     - therm.hA_s_env* (T_s - therm.T_env_C) ) / max(therm.C_steel, eps);
-        else
-            dT_o = 0; dT_s = 0;
-        end
-
-        dz = [ v; dv; dp1; dp2; dQ; dT_o; dT_s ];
-    end
-
-  function Jp = local_JPattern(nn)
-    % Güvenli, tam dolu Jacobian şablonu (küçük sistemler için yeterli).
-    % İsterseniz daha seyrek bir yapı kurabilirsiniz; bu sürüm garanti çalışır.
-    Ns   = nn - 1;
-    Ntot = 2*nn + 2*Ns + Ns + 2;  % 2n (x,v) + 2Ns (p1,p2) + Ns (Q) + 2 (T_o,T_s)
-    Jp   = sparse(ones(Ntot, Ntot));
 end
 
- end
+function dz = mck_rhs(tt,z,n,Ns,nd,hyd,geom,therm,num,cfg,Ap,Ao,k_sd,M,C,K,agf,r,orf)
+    x  = z(1:n); v = z(n+1:2*n);
+    p1 = z(2*n + (1:Ns)); p2 = z(2*n + Ns + (1:Ns));
+    Q  = z(2*n + 2*Ns + (1:Ns)); T_o = z(end-1); T_s = z(end);
+
+    mu_raw = therm.mu_ref * exp(therm.b_mu*(T_o - therm.T_ref_C));
+    if cfg.use_thermal && cfg.on.mu_floor
+        mu = max(num.mu_min_phys,mu_raw);
+    else
+        mu = cfg.use_thermal*mu_raw + (~cfg.use_thermal)*therm.mu_ref;
+    end
+    if cfg.use_thermal
+        rho = max(100,therm.rho_ref/(1+therm.alpha_rho*(T_o-therm.T_ref_C)));
+        beta = max(1e8,therm.beta0*exp(therm.b_beta*(T_o-therm.T_ref_C)));
+        p_vap = p_vap_Antoine(T_o,therm,orf);
+    else
+        rho = therm.rho_ref; beta = therm.beta0; p_vap = p_vap_Antoine(therm.T_ref_C,therm,orf);
+    end
+
+    drift = x(2:end) - x(1:end-1);
+    dvel  = v(2:end) - v(1:end-1);
+
+    V1 = nd*hyd.V0 + Ap*drift;
+    V2 = nd*hyd.V0 - Ap*drift;
+    Vmin = nd * hyd.Vmin_fac * hyd.V0; V1=max(V1,Vmin); V2=max(V2,Vmin);
+
+    % --- Orifis hidrolik kayıpları ---
+    if cfg.use_orifice
+        if cfg.on.CdRe
+            Re = rho .* abs(Q) .* geom.d_o ./ max(Ao * mu, 1e-9);
+            Cd = orf.CdInf - (orf.CdInf - orf.Cd0) ./ (1 + (Re./orf.Rec).^orf.p_exp);
+            Cd = max(min(Cd, 1.2), 0.2);
+        else
+            Cd = orf.CdInf;
+        end
+        if cfg.on.Rkv
+            RQ = rho ./ max(2 * (Cd .* Ao).^2, 1e-12);
+        else
+            RQ = 0 * Q;
+        end
+
+        Qcap = getfield_default(num,'Qcap_big', ...
+            0.4 * ( max(max(orf.CdInf,orf.Cd0)*Ao, 1e-9) * sqrt(2*1.0e9 / max(therm.rho_ref,100)) ) );
+        if cfg.on.Qsat
+            Q_h = Qcap * tanh(Q ./ max(Qcap, 1e-9));
+        else
+            Q_h = Q;
+        end
+
+        dP_kv = RQ .* Q_h .* abs(Q_h);
+        if cfg.on.Rlam
+            R_lam  = (128 * mu * geom.Lori / (pi * geom.d_o^4)) / max(1, nd);
+            dP_lam = R_lam .* Q;
+        else
+            dP_lam = 0 * Q;
+        end
+        dP_h = dP_lam + dP_kv;
+    else
+        dP_h = 0 * Q; Q_h = 0 * Q;
+    end
+
+    % --- Kavitasyon, dP_cap, atalet, leak ---
+    if cfg.on.cavitation
+        p2_eff = max(p2, orf.cav_sf * p_vap);
+    else
+        p2_eff = p2;
+    end
+    dP_raw = p1 - p2_eff;
+    if cfg.on.dP_cap && isfinite(num.dP_cap)
+        dP_eff = num.dP_cap * tanh(dP_raw ./ max(num.dP_cap, 1));
+    else
+        dP_eff = dP_raw;
+    end
+    if cfg.use_orifice && cfg.on.hyd_inertia
+        dQ = (dP_eff - dP_h) ./ max(hyd.Lh, 1e-12);
+    else
+        dQ = 0 * Q;
+    end
+    if cfg.on.leak
+        Q_leak = hyd.K_leak * (p1 - p2);
+    else
+        Q_leak = 0 * Q;
+    end
+
+    % --- Basınç ODE'leri ---
+    if cfg.on.pressure_ode
+        dp1 = (beta ./ V1) .* ( -Q - Q_leak - Ap * dvel );
+        dp2 = (beta ./ V2) .* ( +Q + Q_leak + Ap * dvel );
+    else
+        dp1 = 0 * p1; dp2 = 0 * p2;
+    end
+    % Cavitation clamp
+    if cfg.on.cavitation
+        m1 = (p1 <= p_vap) & ((-Q - Q_leak - Ap*dvel) < 0);
+        m2 = (p2 <= p_vap) & ((+Q + Q_leak + Ap*dvel) < 0);
+        dp1(m1) = 0; dp2(m2) = 0;
+    end
+
+    % --- Damper kuvveti (yay + PF)
+    w_pf    = pf_weight_scalar(tt, cfg) * cfg.PF.gain;
+    F_story = k_sd * drift;
+    if cfg.on.pressure_force
+        dp_pf = (p1 - p2_eff);
+        if isfield(cfg,'on') && isfield(cfg.on,'pf_resistive_only') && cfg.on.pf_resistive_only
+            s = tanh(20*dvel);
+            dp_pf = s .* max(0, s .* dp_pf);
+        end
+        F_story = F_story + Ap * (w_pf .* dp_pf);
+    end
+
+    % --- Kuvvet dağıtımı, yapı ODE ---
+    F        = zeros(n,1);
+    F(1)     = -F_story(1);
+    if n > 2, F(2:n-1) = F_story(1:end-1) - F_story(2:end); end
+    F(n)     =  F_story(end);
+
+    dv = M \ ( -C*v - K*x - F - M*r*agf(tt) );
+
+    % --- Isı ODE'leri ---
+    if cfg.use_thermal
+        if cfg.use_orifice && cfg.on.Rlam, P_lam = dP_lam .* Q; else, P_lam = 0; end
+        if cfg.use_orifice && cfg.on.Rkv,  P_kv  = dP_kv  .* Q; else, P_kv  = 0; end
+        P_sum = sum(P_lam + P_kv); P_sum = max(P_sum, 0);
+
+        dT_o = ( P_sum ...
+                 - therm.hA_os   * (T_o - T_s) ...
+                 - therm.hA_o_env* (T_o - therm.T_env_C) ) / max(therm.C_oil,   eps);
+        dT_s = ( + therm.hA_os   * (T_o - T_s) ...
+                 - therm.hA_s_env* (T_s - therm.T_env_C) ) / max(therm.C_steel, eps);
+    else
+        dT_o = 0; dT_s = 0;
+    end
+
+    dz = [ v; dv; dp1; dp2; dQ; dT_o; dT_s ];
+end
+
+function Jp = local_JPattern(nn)
+    Ns   = nn - 1;
+    Ntot = 2*nn + 2*Ns + Ns + 2;
+    Jp   = sparse(ones(Ntot, Ntot));
+end
 
 function [drift, F_story, dP_orf_t, T_oil, T_steel, mu_t, E_cum, ...
           cav_frac_t, dP_q50, dP_q95, Q_abs_med, Q_abs_p95, ...
@@ -2253,12 +2271,17 @@ function [t5,t95] = arias_win(t,ag,p1,p2)
     [t,ia]=unique(t,'stable'); ag=ag(ia); dt=diff(t); a2=ag.^2;
     Eincr=0.5*(a2(1:end-1)+a2(2:end)).*dt; E=[0; cumsum(Eincr)]; Eend=E(end);
     if Eend<=eps, t5=t(1); t95=t(end); return; end
-    t5=taf(0.05); t95=taf(0.95); t5=max(min(t5,t(end)),t(1)); t95=max(min(t95,t(end)),t(1));
+    t5=arias_taf(0.05, E, Eend, t); t95=arias_taf(0.95, E, Eend, t); t5=max(min(t5,t(end)),t(1)); t95=max(min(t95,t(end)),t(1));
     if t95<=t5, t5=t(1); t95=t(end); end
-    function tv=taf(frac)
-        target=frac*Eend; k=find(E>=target,1,'first');
-        if isempty(k), tv=t(end); elseif k==1, tv=t(1);
-        else, E0=E(k-1); E1=E(k); r=(target-E0)/max(E1-E0,eps); r=min(max(r,0),1); tv=t(k-1)+r*(t(k)-t(k-1)); end
+end
+
+function tv = arias_taf(frac, E, Eend, t)
+    target=frac*Eend; k=find(E>=target,1,'first');
+    if isempty(k), tv=t(end); elseif k==1, tv=t(1);
+    else
+        E0=E(k-1); E1=E(k);
+        r=(target-E0)/max(E1-E0,eps); r=min(max(r,0),1);
+        tv=t(k-1)+r*(t(k)-t(k-1));
     end
 end
 
@@ -2605,30 +2628,6 @@ function Jp = local_JPattern(n)
     Jp = sparse(ones(Ntot, Ntot));  % tüm girişlerin potansiyel nonzero olduğunu varsay
 end
 
-function [J1, J2] = compute_objectives_split( ...
-    src, obj, tail_sec, ...
-    t_rawX,t_rawY,a_rawX,a_rawY,t_sclX,t_sclY,a_sclX,a_sclY, ...
-    t5x_raw,t95x_raw,t5y_raw,t95y_raw,t5x_scl,t95x_scl,t5y_scl,t95y_scl, ...
-    M,Cstr,K,n,geom,sh,orf,hyd,therm,num,cfg, design_set, x_ga)
-
-    % Ortak obj kopyası
-    obj1 = obj; obj2 = obj;
-
-    % J1: yalnız drift (IDR)
-    obj1.weights_da = [1 0];
-    [J1, ~] = compute_objective_over_records( ...
-        src, obj1, tail_sec, ...
-        t_rawX,t_rawY,a_rawX,a_rawY,t_sclX,t_sclY,a_sclX,a_sclY, ...
-        t5x_raw,t95x_raw,t5y_raw,t95y_raw,t5x_scl,t95x_scl,t5y_scl,t95y_scl, ...
-        M,Cstr,K,n,geom,sh,orf,hyd,therm,num,cfg, design_set, x_ga);
-
-    % J2: yalnız mutlak ivme (RMS+p95 hibrit)
-    obj2.weights_da = [0 1];
-    [J2, ~] = compute_objective_over_records( ...
-        src, obj2, tail_sec, ...
-        t_rawX,t_rawY,a_rawX,a_rawY,t_sclX,t_sclY,a_sclX,a_sclY, ...
-        t5x_raw,t95x_raw,t5y_raw,t95y_raw,t5x_scl,t95x_scl,t5y_scl,t95y_scl, ...
-        M,Cstr,K,n,geom,sh,orf,hyd,therm,num,cfg, design_set, x_ga);
 %% ===================== EKSİK/YARDIMCI FONKSİYONLAR =====================
 
 function val = getfield_default(S, name, defaultVal)
@@ -2764,5 +2763,4 @@ function Sa = sdof_PSA_ode(t, ag, T, zeta)
 end
 
 
-end
 
